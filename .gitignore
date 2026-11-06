@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+#virtualenv
+.venv
+venv/
+
+#OS
+ .DS_Store
+ Thumbs.db
+
+ # Application data
+*.db
+*.db-shm
+*.wal
+*.log
