@@ -3,12 +3,12 @@
 import time
 
 import psutil
-from PyQt5.QtCore import QByteArray, QTimer, Qt
+from PyQt5.QtCore import QByteArray, QSize, QTimer, Qt
 from PyQt5.QtWidgets import (
     QApplication,
-    QFrame,
     QLabel,
     QMainWindow,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -71,12 +71,15 @@ class MainWindow(QMainWindow):
         self._settings = settings
         self._settings.setting_changed.connect(self._on_setting_changed)
         self.setWindowTitle("System Monitor")
-        self.resize(1200, 760)
+        self.resize(1250, 800)
 
         self._sidebar = Sidebar(NAV_ENTRIES, self)
 
         self._stack = QStackedWidget(self)
         self._stack.setObjectName("pages")
+        self._stack.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
 
         self._pages: dict = {}
         self._add_page("dashboard", Dashboard(self))
@@ -99,7 +102,7 @@ class MainWindow(QMainWindow):
         splitter.setHandleWidth(1)
         splitter.addWidget(self._sidebar)
         splitter.addWidget(self._stack)
-        splitter.setSizes([250, 950])
+        splitter.setSizes([260, 990])
 
         root.addWidget(splitter)
 

@@ -1,80 +1,118 @@
-"""Vertical navigation rail that switches pages."""
+"""Professional vertical navigation rail that switches pages."""
 
 from typing import List
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QSize, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QAbstractItemView,
     QFrame,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
+    QWidget,
 )
 
 
-class _NavItem(QFrame):
-    """Single nav entry: icon + label, selectable."""
+class Sidebar(QWidget):
+    """Professional sidebar navigation rail.
 
-    def __init__(self, page_id: str, label: str, icon: str, parent=None) -> None:
-        super().__init__(parent)
-        self.page_id = page_id
-        self.setObjectName("navItem")
-        self.setCursor(Qt.PointingHandCursor)
-        self.setFixedHeight(44)
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(0)
-
-        row = QLabel(f"{icon}  {label}")
-        row.setObjectName("navLabel")
-        row.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
-        layout.addWidget(row)
-
-    def set_active(self, active: bool) -> None:
-        self.setProperty("active", "true" if active else "false")
-        self.style().unpolish(self)
-        self.style().polish(self)
-
-
-class Sidebar(QListWidget):
-    """Sidebar navigation. Emits page_selected(page_id)."""
+    Uses checkable QPushButton items so Qt handles active/hover/pressed
+    states natively via QSS — no custom event juggling needed.
+    """
 
     page_selected = pyqtSignal(str)
 
     def __init__(self, entries: List[tuple], parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setViewMode(QListWidget.ListMode)
-        self.setMovement(QListWidget.Static)
-        self.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setFixedWidth(250)
+        self.setSizePolicy(
+            QSizePolicy.Fixed, QSizePolicy.Expanding
+        )
 
-        self._widgets: dict = {}
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # ---------- App header ----------
+        header = QFrame()
+        header.setObjectName("sidebarHeader")
+        header.setFixedHeight(72)
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(20, 14, 20, 14)
+        header_layout.setSpacing(12)
+
+        app_icon = QLabel("\u2600")
+        app_icon.setObjectName("sidebarIcon")
+        app_icon.setStyleSheet("font-size: 22px;")
+
+        app_title = QLabel("System Monitor")
+        app_title.setObjectName("sidebarTitle")
+        app_title.setStyleSheet("font-size: 15px; font-weight: 800;")
+
+        app_sub = QLabel("Blue & White")
+        app_sub.setObjectName("sidebarSubtitle")
+        app_sub.setStyleSheet("font-size: 11px; font-weight: 500;")
+
+        title_col = QVBoxLayout()
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(1)
+        title_col.addWidget(app_title)
+        title_col.addWidget(app_sub)
+
+        header_layout.addWidget(app_icon)
+        header_layout.addLayout(title_col, 1)
+        root.addWidget(header)
+
+        # ---------- Divider ----------
+        divider = QFrame()
+        divider.setObjectName("sidebarDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+
+        # ---------- Nav items (scrollable) ----------
+        scroll = QScrollArea()
+        scroll.setObjectName("sidebarScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        nav_container = QWidget()
+        nav_container.setObjectName("navContainer")
+        nav_layout = QVBoxLayout(nav_container)
+        nav_layout.setContentsMargins(0, 10, 0, 10)
+        nav_layout.setSpacing(4)
+
+        self._buttons: dict = {}
         for page_id, label, icon in entries:
-            self._add_item(page_id, label, icon)
+            btn = self._make_button(page_id, label, icon)
+            nav_layout.addWidget(btn)
+            self._buttons[page_id] = btn
 
-        self.currentItemChanged.connect(self._on_current_changed)
+        nav_layout.addStretch()
+        scroll.setWidget(nav_container)
+        layout.addWidget(scroll)
 
-    def _add_item(self, page_id: str, label: str, icon: str) -> None:
-        widget = _NavItem(page_id, label, icon, self)
-        item = QListWidgetItem(self)
-        item.setData(Qt.ItemDataRole.UserRole, page_id)
-        item.setSizeHint(widget.sizeHint())
-        self.addItem(item)
-        self.setItemWidget(item, widget)
-        self._widgets[page_id] = (item, widget)
+    def _make_button(self, page_id: str, label: str, icon: str) -> QPushButton:
+        btn = QPushButton(f"{icon}   {label}")
+        btn.setObjectName("navButton")
+        btn.setProperty("pageId", page_id)
+        btn.setCheckable(True)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setMinimumHeight(46)
+        btn.setLayoutDirection(Qt.LeftToRight)
+        btn.setStyleSheet(
+            "text-align: left; padding: 10px 18px; font-size: 13px; font-weight: 600;"
+        )
+        btn.clicked.connect(lambda _checked, pid=page_id: self._on_clicked(pid))
+        return btn
+
+    def _on_clicked(self, page_id: str) -> None:
+        self.set_active_page(page_id)
+        self.page_selected.emit(page_id)
 
     def set_active_page(self, page_id: str) -> None:
-        for pid, (item, widget) in self._widgets.items():
-            widget.set_active(pid == page_id)
-            if pid == page_id:
-                self.setCurrentItem(item)
-
-    def _on_current_changed(self, current, previous) -> None:
-        if current is None:
-            return
-        page_id = current.data(Qt.ItemDataRole.UserRole)
-        self.page_selected.emit(page_id)
+        for pid, btn in self._buttons.items():
+            btn.setChecked(pid == page_id)
