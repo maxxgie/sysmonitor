@@ -2,7 +2,7 @@
 
 from typing import List
 
-from PyQt5.QtCore import QSize, Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QFrame,
     QLabel,
@@ -63,7 +63,7 @@ class Sidebar(QWidget):
 
         header_layout.addWidget(app_icon)
         header_layout.addLayout(title_col, 1)
-        root.addWidget(header)
+        layout.addWidget(header)
 
         # ---------- Divider ----------
         divider = QFrame()
