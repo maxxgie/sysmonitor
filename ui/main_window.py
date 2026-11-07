@@ -3,7 +3,7 @@
 import time
 
 import psutil
-from PyQt5.QtCore import QByteArray, QSize, QTimer, Qt
+from PyQt5.QtCore import QByteArray, QTimer, Qt
 from PyQt5.QtWidgets import (
     QApplication,
     QLabel,
