@@ -889,9 +889,9 @@ class CPUMonitorModule:
                     futures = [ex.submit(workload_chunk, per_thread_ops) for _ in range(threads)]
                     for f in as_completed(futures):
                         try:
-                    f.result()
-                            except Exception:
-                                pass
+                            f.result()
+                        except Exception:
+                            pass
             multi_time = time.perf_counter() - multi_start
 
             _progress(90)
