@@ -11,14 +11,16 @@ from systemmonitor.core import settings
 from ui.main_window import MainWindow
 from ui.themes import build_stylesheet, THEMES
 
+
 def create_app() -> QApplication:
     app = QApplication(sys.argv)
     app.setApplicationName("System Monitor")
     app.setOrganizationName("SystemMonitor")
     return app
 
+
 def build_window() -> MainWindow:
-    """ Composition root
+    """Composition root
     create shared services and hand item to the ui."""
     setup_logging()
     database = Database()
@@ -39,10 +41,6 @@ def main():
     window.show()
     return app.exec()
 
+
 if __name__ == "__main__":
     raise SystemExit(main())
-
-                    
-
-
-    
