@@ -1,24 +1,31 @@
-"""Top-level window: sidebar + stacked page area."""
+"""Top-level window: sidebar + stacked page area + live status bar."""
 
-from PyQt5.QtCore import QByteArray, Qt
+import time
+
+from PyQt5.QtCore import QByteArray, QTimer, Qt
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QStackedWidget,
+    QStatusBar,
     QVBoxLayout,
     QWidget,
 )
+
+import psutil
 
 from core.settings import Settings
 from ui.dashboard import Dashboard
 from ui.sidebar import Sidebar
 from ui.settings_page import SettingsPage
+from ui.system_info import SystemInfo
 from ui.themes import build_stylesheet, THEMES
 
 NAV_ENTRIES = [
     ("dashboard", "Dashboard", "\u2600"),
+    ("system", "System Info", "\u2199"),
     ("cpu", "CPU", "\u25FC"),
     ("memory", "Memory", "\u25B2"),
     ("storage", "Storage", "\u26D1"),
@@ -28,7 +35,7 @@ NAV_ENTRIES = [
     ("settings", "Settings", "\u2699"),
 ]
 
-MODULE_PAGES = {"dashboard", "settings"}
+MODULE_PAGES = {"dashboard", "system", "settings"}
 
 
 class _PlaceholderPage(QWidget):
@@ -63,7 +70,7 @@ class MainWindow(QMainWindow):
         super().__init__(parent)
         self._settings = settings
         self.setWindowTitle("System Monitor")
-        self.resize(1100, 700)
+        self.resize(1150, 720)
 
         self._sidebar = Sidebar(NAV_ENTRIES, self)
         self._sidebar.setFixedWidth(240)
@@ -73,6 +80,7 @@ class MainWindow(QMainWindow):
 
         self._pages: dict = {}
         self._add_page("dashboard", Dashboard(self))
+        self._add_page("system", SystemInfo(self))
         self._add_page("settings", SettingsPage(settings, self))
         for page_id, label, _icon in NAV_ENTRIES:
             if page_id in MODULE_PAGES:
@@ -82,12 +90,29 @@ class MainWindow(QMainWindow):
         self._sidebar.page_selected.connect(self._show_page)
 
         central = QWidget(self)
-        root = QHBoxLayout(central)
+        root = QVBoxLayout(central)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        root.addWidget(self._sidebar)
-        root.addWidget(self._stack)
+
+        split = QHBoxLayout()
+        split.setContentsMargins(0, 0, 0, 0)
+        split.setSpacing(0)
+        split.addWidget(self._sidebar)
+        split.addWidget(self._stack)
+
+        root.addLayout(split)
+
         self.setCentralWidget(central)
+
+        self._status = QStatusBar(self)
+        self._status.setObjectName("statusBar")
+        self._cpu_lbl = QLabel("CPU: -- %")
+        self._mem_lbl = QLabel("RAM: -- %")
+        self._time_lbl = QLabel("")
+        self._status.addWidget(self._cpu_lbl)
+        self._status.addWidget(self._mem_lbl)
+        self._status.addPermanentWidget(self._time_lbl)
+        self.setStatusBar(self._status)
 
         start_page = self._settings.get("start_page", "dashboard")
         if start_page not in self._pages:
@@ -101,6 +126,11 @@ class MainWindow(QMainWindow):
             if not ba.isEmpty():
                 self.restoreGeometry(ba)
 
+        self._status_timer = QTimer(self)
+        self._status_timer.timeout.connect(self._update_status)
+        self._status_timer.start(1000)
+        self._update_status()
+
     def _add_page(self, page_id: str, widget: QWidget) -> None:
         self._pages[page_id] = widget
         self._stack.addWidget(widget)
@@ -113,8 +143,22 @@ class MainWindow(QMainWindow):
         self._sidebar.set_active_page(page_id)
         self._settings.set("start_page", page_id)
 
+    def _update_status(self) -> None:
+        try:
+            cpu = psutil.cpu_percent(interval=None)
+            mem = psutil.virtual_memory()
+            self._cpu_lbl.setText(f"CPU: {cpu:.1f} %")
+            self._mem_lbl.setText(f"RAM: {mem.percent:.1f} %")
+        except Exception:
+            self._cpu_lbl.setText("CPU: -- %")
+            self._mem_lbl.setText("RAM: -- %")
+        self._time_lbl.setText(time.strftime("%H:%M:%S"))
+
     def closeEvent(self, event) -> None:
         self._settings.set(
             "window_geometry", bytes(self.saveGeometry().toHex()).decode("latin-1")
         )
+        dashboard = self._pages.get("dashboard")
+        if dashboard is not None:
+            dashboard.stop()
         super().closeEvent(event)
