@@ -23,6 +23,7 @@ from ui.sidebar import Sidebar
 from ui.settings_page import SettingsPage
 from ui.system_info import SystemInfo
 from ui.themes import build_stylesheet, THEMES
+from modules.cpu.cpu_monitor import CPUMonitorModule
 
 NAV_ENTRIES = [
     ("dashboard", "Dashboard", "\u2600"),
@@ -36,7 +37,7 @@ NAV_ENTRIES = [
     ("settings", "Settings", "\u2699"),
 ]
 
-MODULE_PAGES = {"dashboard", "system", "settings"}
+MODULE_PAGES = {"dashboard", "system", "settings", "cpu"}
 
 
 class _PlaceholderPage(QWidget):
@@ -86,6 +87,11 @@ class MainWindow(QMainWindow):
         self._add_page("dashboard", Dashboard(self))
         self._add_page("system", SystemInfo(self))
         self._add_page("settings", SettingsPage(settings, self))
+
+        # ---------- Live feature modules ----------
+        self._cpu_module = CPUMonitorModule(settings)
+        self._add_page("cpu", self._cpu_module.create_page())
+
         for page_id, label, _icon in NAV_ENTRIES:
             if page_id in MODULE_PAGES:
                 continue
@@ -136,6 +142,9 @@ class MainWindow(QMainWindow):
         self._status_timer.start(1000)
         self._update_status()
 
+        # Start the CPU module collector after the window is shown
+        self._cpu_module.start()
+
     def _add_page(self, page_id: str, widget: QWidget) -> None:
         self._pages[page_id] = widget
         self._stack.addWidget(widget)
@@ -171,4 +180,5 @@ class MainWindow(QMainWindow):
         dashboard = self._pages.get("dashboard")
         if dashboard is not None:
             dashboard.stop()
+        self._cpu_module.stop()
         super().closeEvent(event)
