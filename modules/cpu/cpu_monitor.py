@@ -771,7 +771,11 @@ class CPUMonitorModule:
 
     # ---- Benchmark --------------------------------------------------------
 
-    def run_benchmark(self, config: Optional[BenchmarkConfig] = None) -> CPUBenchmarkResult:
+    def run_benchmark(
+        self,
+        config: Optional[BenchmarkConfig] = None,
+        progress_callback: Optional[Any] = None,
+    ) -> CPUBenchmarkResult:
         """Run a comprehensive CPU benchmark with the given configuration.
 
         Modes: single-core, multi-core, multi-thread.
@@ -789,6 +793,15 @@ class CPUMonitorModule:
         cores = max(1, self._collector.info().logical_cores)
         threads = max(1, min(config.thread_count, cores * 2))
         intensity = max(0.1, min(config.intensity, 5.0))
+
+        def _progress(pct: int) -> None:
+            if progress_callback:
+                try:
+                    progress_callback(pct)
+                except Exception:
+                    pass
+
+        _progress(0)
 
         # Safety: warn before intensive tests
         if config.duration == "long" and config.intensity >= 3.0:
@@ -862,6 +875,8 @@ class CPUMonitorModule:
             workload_chunk(base_ops)
             single_time = time.perf_counter() - single_start
 
+            _progress(50)
+
             # ----- Multi-core / Multi-thread benchmark -----
             multi_start = time.perf_counter()
             if config.mode == "single_core":
@@ -874,10 +889,12 @@ class CPUMonitorModule:
                     futures = [ex.submit(workload_chunk, per_thread_ops) for _ in range(threads)]
                     for f in as_completed(futures):
                         try:
-                            f.result()
-                        except Exception:
-                            pass
+                    f.result()
+                            except Exception:
+                                pass
             multi_time = time.perf_counter() - multi_start
+
+            _progress(90)
 
         finally:
             stop_monitor.set()
@@ -953,6 +970,8 @@ class CPUMonitorModule:
         if len(self._benchmark_results) > 100:
             self._benchmark_results = self._benchmark_results[-100:]
         self._save_benchmark_result(result)
+
+        _progress(100)
         return result
 
     def _save_benchmark_result(self, result: CPUBenchmarkResult) -> None:
@@ -1210,15 +1229,17 @@ class CPUPage(QWidget):
         graph_label.setObjectName("subheading")
         root.addWidget(graph_label)
         self.graph_usage = LineGraph(max_points=300)
-        self.graph_usage.setMinimumHeight(200)
-        root.addWidget(self.graph_usage, 1)
+        self.graph_usage.setMinimumHeight(120)
+        self.graph_usage.setMaximumHeight(160)
+        root.addWidget(self.graph_usage)
 
         # Temperature graph
         temp_label = QLabel("Temperature History")
         temp_label.setObjectName("subheading")
         root.addWidget(temp_label)
         self.graph_temp = LineGraph(max_points=300)
-        self.graph_temp.setMinimumHeight(140)
+        self.graph_temp.setMinimumHeight(90)
+        self.graph_temp.setMaximumHeight(130)
         root.addWidget(self.graph_temp)
 
         root.addStretch()
@@ -1640,7 +1661,11 @@ class CPUPage(QWidget):
         QApplication.processEvents()
 
         try:
-            result = self._module.run_benchmark(config)
+            def _on_progress(pct: int) -> None:
+                self.bench_progress.setValue(pct)
+                QApplication.processEvents()
+
+            result = self._module.run_benchmark(config, progress_callback=_on_progress)
             self._display_benchmark_result(result)
             self._refresh_bench_history()
         except Exception as exc:
