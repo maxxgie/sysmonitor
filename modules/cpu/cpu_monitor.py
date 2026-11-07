@@ -51,7 +51,7 @@ from typing import Any, Dict, List, Optional
 
 import psutil
 
-from PyQt5.QtCore import QPointF, QSize, QTimer, Qt
+from PyQt5.QtCore import QPointF, QSize, QThread, QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF, QRadialGradient
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -1176,6 +1176,37 @@ class CPUMonitorModule:
 
 
 # ---------------------------------------------------------------------------
+# Benchmark worker thread
+# ---------------------------------------------------------------------------
+
+
+class BenchmarkWorker(QThread):
+    """Runs CPUBenchmark.run_benchmark in a background thread so the
+    progress bar increments smoothly (1, 2, 3, ...) without freezing the UI."""
+
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(object)   # CPUBenchmarkResult
+    error = pyqtSignal(str)
+
+    def __init__(self, module: CPUMonitorModule, config: BenchmarkConfig) -> None:
+        super().__init__()
+        self._module = module
+        self._config = config
+
+    def run(self) -> None:  # noqa: N802
+        try:
+            def _on_progress(pct: int) -> None:
+                self.progress.emit(pct)
+
+            result = self._module.run_benchmark(
+                self._config, progress_callback=_on_progress
+            )
+            self.finished.emit(result)
+        except Exception as exc:  # noqa: BLE001
+            self.error.emit(str(exc))
+
+
+# ---------------------------------------------------------------------------
 # Page
 # ---------------------------------------------------------------------------
 
@@ -1658,23 +1689,29 @@ class CPUPage(QWidget):
         self.bench_stop_btn.setEnabled(True)
         self.bench_progress.setValue(0)
         self.bench_status.setText("Running benchmark...")
-        QApplication.processEvents()
 
-        try:
-            def _on_progress(pct: int) -> None:
-                self.bench_progress.setValue(pct)
-                QApplication.processEvents()
+        self._bench_worker = BenchmarkWorker(self._module, config)
+        self._bench_worker.progress.connect(
+            lambda pct: self.bench_progress.setValue(pct)
+        )
+        self._bench_worker.finished.connect(self._on_benchmark_finished)
+        self._bench_worker.error.connect(self._on_benchmark_error)
+        self._bench_worker.start()
 
-            result = self._module.run_benchmark(config, progress_callback=_on_progress)
-            self._display_benchmark_result(result)
-            self._refresh_bench_history()
-        except Exception as exc:
-            QMessageBox.critical(self, "Benchmark Error", f"Benchmark failed: {exc}")
-        finally:
-            self.bench_run_btn.setEnabled(True)
-            self.bench_stop_btn.setEnabled(False)
-            self.bench_progress.setValue(100)
-            self.bench_status.setText("Benchmark complete")
+    def _on_benchmark_finished(self, result: CPUBenchmarkResult) -> None:
+        self.bench_progress.setValue(100)
+        self.bench_run_btn.setEnabled(True)
+        self.bench_stop_btn.setEnabled(False)
+        self.bench_status.setText("Benchmark complete")
+        self._display_benchmark_result(result)
+        self._refresh_bench_history()
+
+    def _on_benchmark_error(self, message: str) -> None:
+        self.bench_run_btn.setEnabled(True)
+        self.bench_stop_btn.setEnabled(False)
+        self.bench_progress.setValue(0)
+        self.bench_status.setText("Benchmark failed")
+        QMessageBox.critical(self, "Benchmark Error", f"Benchmark failed: {message}")
 
     def _stop_benchmark(self) -> None:
         self.bench_status.setText("Stopping benchmark...")
