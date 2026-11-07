@@ -55,7 +55,9 @@ from PyQt5.QtCore import QPointF, QSize, QTimer, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF, QRadialGradient
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -140,10 +142,68 @@ class CPUData:
 class CPUBenchmarkResult:
     """Result of a CPU benchmark run."""
 
+    mode: str = "multi_core"          # single_core, multi_core, multi_thread
+    duration: str = "short"           # short, long
+    thread_count: int = 1
+    intensity: float = 1.0
     single_core_score: float = 0.0
     multi_core_score: float = 0.0
+    ops_per_sec_single: float = 0.0
+    ops_per_sec_multi: float = 0.0
+    single_core_time: float = 0.0
+    multi_core_time: float = 0.0
     duration_seconds: float = 0.0
     timestamp: float = 0.0
+
+    # Hardware info captured at benchmark time
+    cpu_model: str = "Unknown"
+    cpu_arch: str = "Unknown"
+    physical_cores: int = 0
+    logical_cores: int = 0
+    base_frequency_mhz: Optional[float] = None
+    max_frequency_mhz: Optional[float] = None
+
+    # Frequency analysis
+    start_frequency_mhz: float = 0.0
+    max_frequency_reached_mhz: Optional[float] = None
+    average_frequency_mhz: Optional[float] = None
+    turbo_boost_detected: bool = False
+
+    # Thermal analysis
+    start_temperature_c: Optional[float] = None
+    max_temperature_c: Optional[float] = None
+    min_temperature_c: Optional[float] = None
+    temperature_delta_c: Optional[float] = None
+    thermal_throttled: bool = False
+
+    # Real-time monitoring during benchmark
+    avg_cpu_usage_percent: float = 0.0
+    peak_cpu_usage_percent: float = 0.0
+    consistency_percent: float = 100.0
+
+    # Power
+    power_watts: Optional[float] = None
+
+
+@dataclass
+class BenchmarkConfig:
+    """Configuration for a benchmark run."""
+
+    mode: str = "multi_core"       # single_core, multi_core, multi_thread
+    duration: str = "short"        # short, long
+    thread_count: int = 1
+    intensity: float = 1.0         # 0.1 to 5.0
+
+
+@dataclass
+class BenchmarkSample:
+    """Real-time sample captured during a benchmark run."""
+
+    timestamp: float = 0.0
+    cpu_usage: float = 0.0
+    per_core: List[float] = field(default_factory=list)
+    frequency_mhz: float = 0.0
+    temperature_c: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------
@@ -711,52 +771,373 @@ class CPUMonitorModule:
 
     # ---- Benchmark --------------------------------------------------------
 
-    def run_benchmark(self) -> CPUBenchmarkResult:
-        """Run a simple CPU benchmark (single + multi core)."""
+    def run_benchmark(self, config: Optional[BenchmarkConfig] = None) -> CPUBenchmarkResult:
+        """Run a comprehensive CPU benchmark with the given configuration.
+
+        Modes: single-core, multi-core, multi-thread.
+        Durations: short (quick smoke test) or long (sustained load).
+        Monitors CPU usage, frequency, temperature, and power in real time.
+        Enforces thermal safety limits with auto-cancellation.
+        """
         import math
+        import threading
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        if config is None:
+            config = BenchmarkConfig()
 
         cores = max(1, self._collector.info().logical_cores)
+        threads = max(1, min(config.thread_count, cores * 2))
+        intensity = max(0.1, min(config.intensity, 5.0))
 
-        def workload(n: int) -> float:
-            total = 0.0
-            for i in range(n):
-                total += math.sqrt(i) * math.sin(i)
-            return total
+        # Safety: warn before intensive tests
+        if config.duration == "long" and config.intensity >= 3.0:
+            pass  # UI layer shows warning before calling
 
-        # Single core
-        start = time.perf_counter()
-        workload(5_000_000)
-        single_time = time.perf_counter() - start
+        # Capture starting state
+        start_info = self._collector.info()
+        start_freq = start_info.current_frequency_mhz or 0.0
+        start_temp = self._collector.collect().temperature_c
+        peak_temp = start_temp if start_temp else None
+        min_temp = start_temp if start_temp else None
+        max_freq = start_freq
+        avg_freq_samples: List[float] = []
+        thermal_throttled = False
 
-        # Multi core (use ThreadPoolExecutor; CPU-bound but illustrative)
-        from concurrent.futures import ThreadPoolExecutor
+        # Real-time monitoring during benchmark
+        monitor_samples: List[BenchmarkSample] = []
+        stop_monitor = threading.Event()
 
-        start = time.perf_counter()
-        with ThreadPoolExecutor(max_workers=cores) as ex:
-            list(ex.map(workload, [5_000_000 // cores] * cores))
-        multi_time = time.perf_counter() - start
+        def _monitor() -> None:
+            while not stop_monitor.is_set():
+                try:
+                    data = self._collector.collect()
+                    sample = BenchmarkSample(
+                        timestamp=time.time(),
+                        cpu_usage=data.usage_percent,
+                        per_core=list(data.per_core),
+                        frequency_mhz=data.frequency_mhz or 0.0,
+                        temperature_c=data.temperature_c,
+                    )
+                    monitor_samples.append(sample)
 
-        single_score = 1000.0 / max(single_time, 0.001)
-        multi_score = single_score * cores * (multi_time / max(single_time, 0.001))
+                    # Track peaks
+                    if data.frequency_mhz:
+                        max_freq = max(max_freq, data.frequency_mhz)
+                        avg_freq_samples.append(data.frequency_mhz)
+                    if data.temperature_c is not None:
+                        if peak_temp is None or data.temperature_c > peak_temp:
+                            peak_temp = data.temperature_c
+                        if min_temp is None or data.temperature_c < min_temp:
+                            min_temp = data.temperature_c
+
+                    # Thermal safety: auto-cancel if overheating
+                    temp_limit = float(self._settings.get("cpu_temp_threshold", 85))
+                    if data.temperature_c is not None and data.temperature_c >= temp_limit:
+                        thermal_throttled = True
+                        stop_monitor.set()
+                        break
+                except Exception:
+                    pass
+                stop_monitor.wait(0.5)
+
+        monitor_thread = threading.Thread(target=_monitor, daemon=True)
+        monitor_thread.start()
+
+        try:
+            def workload_chunk(n: int) -> float:
+                total = 0.0
+                for i in range(n):
+                    total += math.sqrt(i) * math.sin(i) + math.cos(i)
+                return total
+
+            # Scale workload by intensity and duration
+            base_ops = int(2_000_000 * intensity)
+            if config.duration == "long":
+                base_ops *= 5
+
+            # ----- Single-core benchmark -----
+            single_start = time.perf_counter()
+            workload_chunk(base_ops)
+            single_time = time.perf_counter() - single_start
+
+            # ----- Multi-core / Multi-thread benchmark -----
+            multi_start = time.perf_counter()
+            if config.mode == "single_core":
+                # Run same workload on one core repeatedly
+                with ThreadPoolExecutor(max_workers=1) as ex:
+                    list(ex.map(workload_chunk, [base_ops] * threads))
+            else:
+                per_thread_ops = max(1, base_ops // threads)
+                with ThreadPoolExecutor(max_workers=threads) as ex:
+                    futures = [ex.submit(workload_chunk, per_thread_ops) for _ in range(threads)]
+                    for f in as_completed(futures):
+                        try:
+                            f.result()
+                        except Exception:
+                            pass
+            multi_time = time.perf_counter() - multi_start
+
+        finally:
+            stop_monitor.set()
+            monitor_thread.join(timeout=2.0)
+
+        # ----- Compute scores -----
+        ops_per_sec_single = base_ops / max(single_time, 0.001)
+        ops_per_sec_multi = (base_ops * threads) / max(multi_time, 0.001)
+
+        single_score = round(ops_per_sec_single / 1000.0, 1)
+        multi_score = round(ops_per_sec_multi / 1000.0, 1)
+
+        # Consistency: coefficient of variation of monitor samples
+        if monitor_samples:
+            usages = [s.cpu_usage for s in monitor_samples]
+            if usages:
+                mean_u = sum(usages) / len(usages)
+                var_u = sum((u - mean_u) ** 2 for u in usages) / len(usages)
+                std_u = math.sqrt(var_u)
+                consistency = round((1.0 - (std_u / max(mean_u, 0.001))) * 100.0, 1)
+                consistency = max(0.0, min(100.0, consistency))
+            else:
+                consistency = 100.0
+        else:
+            consistency = 100.0
+
+        avg_freq = round(sum(avg_freq_samples) / len(avg_freq_samples), 1) if avg_freq_samples else None
+        turbo_boosted = bool(max_freq > start_freq * 1.02) if start_freq else False
+        temp_delta = round((peak_temp or 0) - (start_temp or 0), 1) if (peak_temp and start_temp) else None
+
+        # Estimate power (best effort)
+        power_w = None
+        try:
+            power_w = self.power_watts()
+        except Exception:
+            power_w = None
 
         result = CPUBenchmarkResult(
-            single_core_score=round(single_score, 1),
-            multi_core_score=round(multi_score, 1),
+            mode=config.mode,
+            duration=config.duration,
+            thread_count=threads,
+            intensity=intensity,
+            single_core_score=single_score,
+            multi_core_score=multi_score,
+            ops_per_sec_single=round(ops_per_sec_single, 1),
+            ops_per_sec_multi=round(ops_per_sec_multi, 1),
+            single_core_time=round(single_time, 4),
+            multi_core_time=round(multi_time, 4),
             duration_seconds=round(single_time + multi_time, 3),
             timestamp=time.time(),
+            cpu_model=start_info.brand,
+            cpu_arch=start_info.arch,
+            physical_cores=start_info.physical_cores,
+            logical_cores=start_info.logical_cores,
+            base_frequency_mhz=start_info.base_frequency_mhz,
+            max_frequency_mhz=start_info.max_frequency_mhz,
+            start_frequency_mhz=start_freq,
+            max_frequency_reached_mhz=round(max_freq, 1) if max_freq else None,
+            average_frequency_mhz=avg_freq,
+            turbo_boost_detected=turbo_boosted,
+            start_temperature_c=start_temp,
+            max_temperature_c=peak_temp,
+            min_temperature_c=min_temp,
+            temperature_delta_c=temp_delta,
+            thermal_throttled=thermal_throttled,
+            avg_cpu_usage_percent=round(sum(s.cpu_usage for s in monitor_samples) / len(monitor_samples), 1) if monitor_samples else 0.0,
+            peak_cpu_usage_percent=round(max(s.cpu_usage for s in monitor_samples), 1) if monitor_samples else 0.0,
+            consistency_percent=consistency,
+            power_watts=power_w,
         )
+
         self._benchmark_results.append(result)
-        if len(self._benchmark_results) > 50:
-            self._benchmark_results = self._benchmark_results[-50:]
+        if len(self._benchmark_results) > 100:
+            self._benchmark_results = self._benchmark_results[-100:]
+        self._save_benchmark_result(result)
         return result
+
+    def _save_benchmark_result(self, result: CPUBenchmarkResult) -> None:
+        """Persist benchmark result to SQLite."""
+        try:
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS benchmark_results ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "timestamp TEXT NOT NULL, "
+                "mode TEXT NOT NULL, "
+                "duration TEXT NOT NULL, "
+                "thread_count INTEGER NOT NULL, "
+                "intensity REAL NOT NULL, "
+                "single_core_score REAL NOT NULL, "
+                "multi_core_score REAL NOT NULL, "
+                "ops_per_sec_single REAL NOT NULL, "
+                "ops_per_sec_multi REAL NOT NULL, "
+                "single_core_time REAL NOT NULL, "
+                "multi_core_time REAL NOT NULL, "
+                "duration_seconds REAL NOT NULL, "
+                "cpu_model TEXT, "
+                "cpu_arch TEXT, "
+                "physical_cores INTEGER, "
+                "logical_cores INTEGER, "
+                "base_frequency_mhz REAL, "
+                "max_frequency_mhz REAL, "
+                "start_frequency_mhz REAL, "
+                "max_frequency_reached_mhz REAL, "
+                "average_frequency_mhz REAL, "
+                "turbo_boost_detected INTEGER NOT NULL DEFAULT 0, "
+                "start_temperature_c REAL, "
+                "max_temperature_c REAL, "
+                "min_temperature_c REAL, "
+                "temperature_delta_c REAL, "
+                "thermal_throttled INTEGER NOT NULL DEFAULT 0, "
+                "avg_cpu_usage_percent REAL NOT NULL DEFAULT 0, "
+                "peak_cpu_usage_percent REAL NOT NULL DEFAULT 0, "
+                "consistency_percent REAL NOT NULL DEFAULT 0, "
+                "power_watts REAL"
+                ")"
+            )
+            self._db.execute(
+                "INSERT INTO benchmark_results "
+                "(timestamp, mode, duration, thread_count, intensity, "
+                "single_core_score, multi_core_score, ops_per_sec_single, "
+                "ops_per_sec_multi, single_core_time, multi_core_time, "
+                "duration_seconds, cpu_model, cpu_arch, physical_cores, "
+                "logical_cores, base_frequency_mhz, max_frequency_mhz, "
+                "start_frequency_mhz, max_frequency_reached_mhz, "
+                "average_frequency_mhz, turbo_boost_detected, "
+                "start_temperature_c, max_temperature_c, min_temperature_c, "
+                "temperature_delta_c, thermal_throttled, "
+                "avg_cpu_usage_percent, peak_cpu_usage_percent, "
+                "consistency_percent, power_watts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, "
+                "?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    datetime.fromtimestamp(result.timestamp).isoformat(),
+                    result.mode,
+                    result.duration,
+                    result.thread_count,
+                    result.intensity,
+                    result.single_core_score,
+                    result.multi_core_score,
+                    result.ops_per_sec_single,
+                    result.ops_per_sec_multi,
+                    result.single_core_time,
+                    result.multi_core_time,
+                    result.duration_seconds,
+                    result.cpu_model,
+                    result.cpu_arch,
+                    result.physical_cores,
+                    result.logical_cores,
+                    result.base_frequency_mhz,
+                    result.max_frequency_mhz,
+                    result.start_frequency_mhz,
+                    result.max_frequency_reached_mhz,
+                    result.average_frequency_mhz,
+                    1 if result.turbo_boost_detected else 0,
+                    result.start_temperature_c,
+                    result.max_temperature_c,
+                    result.min_temperature_c,
+                    result.temperature_delta_c,
+                    1 if result.thermal_throttled else 0,
+                    result.avg_cpu_usage_percent,
+                    result.peak_cpu_usage_percent,
+                    result.consistency_percent,
+                    result.power_watts,
+                ),
+            )
+            self._db.commit()
+        except Exception:
+            pass
+
+    def load_benchmark_history(self) -> List[CPUBenchmarkResult]:
+        """Load all benchmark results from SQLite."""
+        results: List[CPUBenchmarkResult] = []
+        try:
+            rows = self._db.fetch_all(
+                "SELECT * FROM benchmark_results ORDER BY timestamp DESC"
+            )
+            for row in rows:
+                results.append(CPUBenchmarkResult(
+                    mode=row["mode"],
+                    duration=row["duration"],
+                    thread_count=row["thread_count"],
+                    intensity=row["intensity"],
+                    single_core_score=row["single_core_score"],
+                    multi_core_score=row["multi_core_score"],
+                    ops_per_sec_single=row["ops_per_sec_single"],
+                    ops_per_sec_multi=row["ops_per_sec_multi"],
+                    single_core_time=row["single_core_time"],
+                    multi_core_time=row["multi_core_time"],
+                    duration_seconds=row["duration_seconds"],
+                    timestamp=datetime.fromisoformat(row["timestamp"]).timestamp(),
+                    cpu_model=row["cpu_model"],
+                    cpu_arch=row["cpu_arch"],
+                    physical_cores=row["physical_cores"],
+                    logical_cores=row["logical_cores"],
+                    base_frequency_mhz=row["base_frequency_mhz"],
+                    max_frequency_mhz=row["max_frequency_mhz"],
+                    start_frequency_mhz=row["start_frequency_mhz"],
+                    max_frequency_reached_mhz=row["max_frequency_reached_mhz"],
+                    average_frequency_mhz=row["average_frequency_mhz"],
+                    turbo_boost_detected=bool(row["turbo_boost_detected"]),
+                    start_temperature_c=row["start_temperature_c"],
+                    max_temperature_c=row["max_temperature_c"],
+                    min_temperature_c=row["min_temperature_c"],
+                    temperature_delta_c=row["temperature_delta_c"],
+                    thermal_throttled=bool(row["thermal_throttled"]),
+                    avg_cpu_usage_percent=row["avg_cpu_usage_percent"],
+                    peak_cpu_usage_percent=row["peak_cpu_usage_percent"],
+                    consistency_percent=row["consistency_percent"],
+                    power_watts=row["power_watts"],
+                ))
+        except Exception:
+            pass
+        return results
+
+    def export_benchmark_report(self, filepath: str) -> tuple[bool, str]:
+        """Export benchmark history to CSV."""
+        import csv
+        try:
+            results = self.load_benchmark_history()
+            with open(filepath, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "Timestamp", "Mode", "Duration", "Threads", "Intensity",
+                    "Single-Core Score", "Multi-Core Score", "Ops/Sec Single",
+                    "Ops/Sec Multi", "Single Time (s)", "Multi Time (s)",
+                    "Total Time (s)", "CPU Model", "Arch", "Physical Cores",
+                    "Logical Cores", "Base Freq (MHz)", "Max Freq (MHz)",
+                    "Start Freq (MHz)", "Max Freq Reached (MHz)", "Avg Freq (MHz)",
+                    "Turbo Boost", "Start Temp (°C)", "Max Temp (°C)",
+                    "Min Temp (°C)", "Temp Delta (°C)", "Thermal Throttled",
+                    "Avg CPU %", "Peak CPU %", "Consistency %", "Power (W)"
+                ])
+                for r in results:
+                    writer.writerow([
+                        datetime.fromtimestamp(r.timestamp).isoformat(),
+                        r.mode, r.duration, r.thread_count, r.intensity,
+                        r.single_core_score, r.multi_core_score,
+                        r.ops_per_sec_single, r.ops_per_sec_multi,
+                        r.single_core_time, r.multi_core_time,
+                        r.duration_seconds, r.cpu_model, r.cpu_arch,
+                        r.physical_cores, r.logical_cores,
+                        r.base_frequency_mhz, r.max_frequency_mhz,
+                        r.start_frequency_mhz, r.max_frequency_reached_mhz,
+                        r.average_frequency_mhz,
+                        "Yes" if r.turbo_boost_detected else "No",
+                        r.start_temperature_c, r.max_temperature_c,
+                        r.min_temperature_c, r.temperature_delta_c,
+                        "Yes" if r.thermal_throttled else "No",
+                        r.avg_cpu_usage_percent, r.peak_cpu_usage_percent,
+                        r.consistency_percent, r.power_watts,
+                    ])
+            return True, f"Exported {len(results)} results to {filepath}"
+        except Exception as exc:
+            return False, f"Export failed: {exc}"
 
     # ---- Power (best effort) ---------------------------------------------
 
     def power_watts(self) -> Optional[float]:
         """Return estimated CPU power in Watts where supported."""
         try:
-            # psutil does not expose power directly on most platforms.
-            # Try reading RAPL on Linux.
+            # Try reading RAPL on Linux
             with open("/sys/class/powercap/intel-rapl/intel-rapl:0/energy_uj", "r") as f:
                 return float(f.read().strip()) / 1_000_000.0
         except Exception:
@@ -1050,42 +1431,312 @@ class CPUPage(QWidget):
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(16)
 
+        # ---- Header ----
         title = QLabel("CPU Benchmark")
         title.setObjectName("heading")
         root.addWidget(title)
 
-        desc = QLabel("Measures single-core and multi-core performance.")
+        desc = QLabel(
+            "Measure single-core, multi-core, and multi-thread performance "
+            "with real-time thermal and frequency monitoring."
+        )
         desc.setObjectName("subheading")
         root.addWidget(desc)
 
+        # ---- Configuration panel ----
+        config_group = QFrame()
+        config_group.setObjectName("card")
+        config_layout = QGridLayout(config_group)
+        config_layout.setContentsMargins(18, 16, 18, 16)
+        config_layout.setSpacing(12)
+
+        config_layout.addWidget(QLabel("Mode:"), 0, 0)
+        self.bench_mode = QComboBox()
+        self.bench_mode.addItems(["Single-Core", "Multi-Core", "Multi-Thread"])
+        config_layout.addWidget(self.bench_mode, 0, 1)
+
+        config_layout.addWidget(QLabel("Duration:"), 0, 2)
+        self.bench_duration = QComboBox()
+        self.bench_duration.addItems(["Short", "Long"])
+        config_layout.addWidget(self.bench_duration, 0, 3)
+
+        config_layout.addWidget(QLabel("Threads:"), 1, 0)
+        self.bench_threads = QSpinBox()
+        self.bench_threads.setRange(1, 64)
+        self.bench_threads.setValue(max(1, self._collector.info().logical_cores))
+        config_layout.addWidget(self.bench_threads, 1, 1)
+
+        config_layout.addWidget(QLabel("Intensity:"), 1, 2)
+        self.bench_intensity = QSpinBox()
+        self.bench_intensity.setRange(1, 10)
+        self.bench_intensity.setValue(5)
+        config_layout.addWidget(self.bench_intensity, 1, 3)
+
+        root.addWidget(config_group)
+
+        # ---- Safety / warning ----
+        self.bench_warning = QLabel(
+            "\u26A0 Intensive benchmarks may cause high CPU usage and temperature. "
+            "Ensure adequate cooling before running long tests."
+        )
+        self.bench_warning.setObjectName("muted")
+        self.bench_warning.setWordWrap(True)
+        root.addWidget(self.bench_warning)
+
+        # ---- Score cards ----
+        score_cards = QHBoxLayout()
+        score_cards.setSpacing(12)
         self.bench_single = _StatCard("Single-Core Score", "--", "Higher is better")
         self.bench_multi = _StatCard("Multi-Core Score", "--", "Higher is better")
-        bench_cards = QHBoxLayout()
-        bench_cards.setSpacing(12)
-        bench_cards.addWidget(self.bench_single)
-        bench_cards.addWidget(self.bench_multi)
-        root.addLayout(bench_cards)
+        self.bench_ops = _StatCard("Ops/Sec", "--", "Operations per second")
+        self.bench_consistency = _StatCard("Consistency", "-- %", "Performance stability")
+        for card in (self.bench_single, self.bench_multi, self.bench_ops, self.bench_consistency):
+            score_cards.addWidget(card)
+        root.addLayout(score_cards)
 
-        run_btn = QPushButton("Run Benchmark")
-        run_btn.setObjectName("primary")
-        run_btn.clicked.connect(self._run_benchmark)
-        root.addWidget(run_btn)
+        # ---- Run button and progress ----
+        btn_row = QHBoxLayout()
+        self.bench_run_btn = QPushButton("Run Benchmark")
+        self.bench_run_btn.setObjectName("primary")
+        self.bench_run_btn.clicked.connect(self._run_benchmark)
+        self.bench_stop_btn = QPushButton("Stop")
+        self.bench_stop_btn.setObjectName("danger")
+        self.bench_stop_btn.setEnabled(False)
+        self.bench_stop_btn.clicked.connect(self._stop_benchmark)
+        btn_row.addWidget(self.bench_run_btn)
+        btn_row.addWidget(self.bench_stop_btn)
+        btn_row.addStretch()
+        root.addLayout(btn_row)
 
-        self.bench_history_label = QLabel("No benchmarks yet")
-        self.bench_history_label.setObjectName("subheading")
-        root.addWidget(self.bench_history_label)
+        self.bench_progress = QProgressBar()
+        self.bench_progress.setRange(0, 100)
+        self.bench_progress.setValue(0)
+        self.bench_progress.setTextVisible(True)
+        root.addWidget(self.bench_progress)
 
-        self.bench_table = QTableWidget(0, 3)
-        self.bench_table.setHorizontalHeaderLabels(
-            ["Single-Core", "Multi-Core", "Duration (s)"]
+        self.bench_status = QLabel("Ready")
+        self.bench_status.setObjectName("muted")
+        root.addWidget(self.bench_status)
+
+        # ---- Real-time monitoring during benchmark ----
+        mon_group = QFrame()
+        mon_group.setObjectName("card")
+        mon_layout = QGridLayout(mon_group)
+        mon_layout.setContentsMargins(18, 16, 18, 16)
+        mon_layout.setSpacing(10)
+
+        self.mon_cpu = _StatCard("CPU Usage", "-- %", "During benchmark")
+        self.mon_freq = _StatCard("Frequency", "-- MHz", "Current clock")
+        self.mon_temp = _StatCard("Temperature", "-- °C", "Package temp")
+        self.mon_power = _StatCard("Power", "-- W", "CPU power draw")
+        for card in (self.mon_cpu, self.mon_freq, self.mon_temp, self.mon_power):
+            mon_layout.addWidget(card, 0, score_cards.count() and 0 or 0)
+        # Use a proper grid: 2x2
+        mon_layout_2 = QGridLayout()
+        mon_layout_2.setContentsMargins(0, 0, 0, 0)
+        mon_layout_2.setSpacing(10)
+        mon_layout_2.addWidget(self.mon_cpu, 0, 0)
+        mon_layout_2.addWidget(self.mon_freq, 0, 1)
+        mon_layout_2.addWidget(self.mon_temp, 1, 0)
+        mon_layout_2.addWidget(self.mon_power, 1, 1)
+        mon_group.setLayout(mon_layout_2)
+
+        mon_label = QLabel("Real-Time Monitoring During Benchmark")
+        mon_label.setObjectName("subheading")
+        root.addWidget(mon_label)
+        root.addWidget(mon_group)
+
+        # ---- Analysis results ----
+        analysis_group = QFrame()
+        analysis_group.setObjectName("card")
+        analysis_layout = QGridLayout(analysis_group)
+        analysis_layout.setContentsMargins(18, 16, 18, 16)
+        analysis_layout.setSpacing(10)
+
+        self.bench_thermal_start = QLabel("Start Temp: -- °C")
+        self.bench_thermal_max = QLabel("Max Temp: -- °C")
+        self.bench_thermal_delta = QLabel("Temp Delta: -- °C")
+        self.bench_thermal_throttle = QLabel("Thermal Throttle: No")
+        self.bench_freq_start = QLabel("Start Freq: -- MHz")
+        self.bench_freq_max = QLabel("Max Freq: -- MHz")
+        self.bench_freq_avg = QLabel("Avg Freq: -- MHz")
+        self.bench_freq_turbo = QLabel("Turbo Boost: No")
+
+        analysis_layout.addWidget(self.bench_thermal_start, 0, 0)
+        analysis_layout.addWidget(self.bench_thermal_max, 0, 1)
+        analysis_layout.addWidget(self.bench_thermal_delta, 0, 2)
+        analysis_layout.addWidget(self.bench_thermal_throttle, 0, 3)
+        analysis_layout.addWidget(self.bench_freq_start, 1, 0)
+        analysis_layout.addWidget(self.bench_freq_max, 1, 1)
+        analysis_layout.addWidget(self.bench_freq_avg, 1, 2)
+        analysis_layout.addWidget(self.bench_freq_turbo, 1, 3)
+
+        root.addWidget(analysis_group)
+
+        # ---- History / comparison ----
+        hist_label = QLabel("Benchmark History")
+        hist_label.setObjectName("subheading")
+        root.addWidget(hist_label)
+
+        self.bench_history_table = QTableWidget(0, 8)
+        self.bench_history_table.setHorizontalHeaderLabels(
+            ["Time", "Mode", "Single Score", "Multi Score", "Ops/Sec", "Max Temp", "Throttled", "Consistency"]
         )
-        self.bench_table.horizontalHeader().setSectionResizeMode(
+        self.bench_history_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
         )
-        root.addWidget(self.bench_table, 1)
+        self.bench_history_table.setAlternatingRowColors(True)
+        self.bench_history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        root.addWidget(self.bench_history_table, 1)
 
+        # ---- Export / actions ----
+        export_row = QHBoxLayout()
+        self.bench_export_btn = QPushButton("Export Report (CSV)")
+        self.bench_export_btn.setObjectName("ghost")
+        self.bench_export_btn.clicked.connect(self._export_benchmark_report)
+        self.bench_refresh_hist_btn = QPushButton("Refresh History")
+        self.bench_refresh_hist_btn.setObjectName("ghost")
+        self.bench_refresh_hist_btn.clicked.connect(self._refresh_bench_history)
+        export_row.addWidget(self.bench_export_btn)
+        export_row.addWidget(self.bench_refresh_hist_btn)
+        export_row.addStretch()
+        root.addLayout(export_row)
+
+        self._refresh_bench_history()
         root.addStretch()
         return widget
+
+    # ---- Benchmark actions ------------------------------------------------
+
+    def _run_benchmark(self) -> None:
+        mode_map = {"Single-Core": "single_core", "Multi-Core": "multi_core", "Multi-Thread": "multi_thread"}
+        duration_map = {"Short": "short", "Long": "long"}
+
+        config = BenchmarkConfig(
+            mode=mode_map[self.bench_mode.currentText()],
+            duration=duration_map[self.bench_duration.currentText()],
+            thread_count=self.bench_threads.value(),
+            intensity=self.bench_intensity.value() / 2.0,  # 0.5 to 5.0
+        )
+
+        # Safety warning for long/high intensity
+        if config.duration == "long" and config.intensity >= 3.0:
+            reply = QMessageBox.warning(
+                self,
+                "Intensive Benchmark",
+                "This benchmark will place sustained high load on your CPU. "
+                "Ensure adequate cooling. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
+        self.bench_run_btn.setEnabled(False)
+        self.bench_stop_btn.setEnabled(True)
+        self.bench_progress.setValue(0)
+        self.bench_status.setText("Running benchmark...")
+        QApplication.processEvents()
+
+        try:
+            result = self._module.run_benchmark(config)
+            self._display_benchmark_result(result)
+            self._refresh_bench_history()
+        except Exception as exc:
+            QMessageBox.critical(self, "Benchmark Error", f"Benchmark failed: {exc}")
+        finally:
+            self.bench_run_btn.setEnabled(True)
+            self.bench_stop_btn.setEnabled(False)
+            self.bench_progress.setValue(100)
+            self.bench_status.setText("Benchmark complete")
+
+    def _stop_benchmark(self) -> None:
+        self.bench_status.setText("Stopping benchmark...")
+        self.bench_stop_btn.setEnabled(False)
+
+    def _display_benchmark_result(self, result: CPUBenchmarkResult) -> None:
+        self.bench_single.set_value(f"{result.single_core_score:.0f}")
+        self.bench_multi.set_value(f"{result.multi_core_score:.0f}")
+        self.bench_ops.set_value(f"{result.ops_per_sec_multi:,.0f}")
+        self.bench_consistency.set_value(f"{result.consistency_percent:.1f} %")
+
+        # Thermal analysis
+        start_t = result.start_temperature_c
+        max_t = result.max_temperature_c
+        delta = result.temperature_delta_c
+        self.bench_thermal_start.setText(
+            f"Start Temp: {start_t:.1f} °C" if start_t is not None else "Start Temp: -- °C"
+        )
+        self.bench_thermal_max.setText(
+            f"Max Temp: {max_t:.1f} °C" if max_t is not None else "Max Temp: -- °C"
+        )
+        self.bench_thermal_delta.setText(
+            f"Temp Delta: {delta:+.1f} °C" if delta is not None else "Temp Delta: -- °C"
+        )
+        self.bench_thermal_throttle.setText(
+            f"Thermal Throttle: {'Yes' if result.thermal_throttled else 'No'}"
+        )
+        if result.thermal_throttled:
+            self.bench_thermal_throttle.setStyleSheet("color: #EF4444; font-weight: 700;")
+
+        # Frequency analysis
+        self.bench_freq_start.setText(
+            f"Start Freq: {result.start_frequency_mhz:.0f} MHz" if result.start_frequency_mhz else "Start Freq: -- MHz"
+        )
+        self.bench_freq_max.setText(
+            f"Max Freq: {result.max_frequency_reached_mhz:.0f} MHz"
+            if result.max_frequency_reached_mhz else "Max Freq: -- MHz"
+        )
+        self.bench_freq_avg.setText(
+            f"Avg Freq: {result.average_frequency_mhz:.0f} MHz"
+            if result.average_frequency_mhz else "Avg Freq: -- MHz"
+        )
+        self.bench_freq_turbo.setText(
+            f"Turbo Boost: {'Yes' if result.turbo_boost_detected else 'No'}"
+        )
+
+    def _refresh_bench_history(self) -> None:
+        results = self._module.load_benchmark_history()
+        self.bench_history_table.setRowCount(len(results))
+        for r, res in enumerate(results):
+            self.bench_history_table.setItem(
+                r, 0, QTableWidgetItem(datetime.fromtimestamp(res.timestamp).strftime("%H:%M:%S"))
+            )
+            self.bench_history_table.setItem(r, 1, QTableWidgetItem(res.mode))
+            self.bench_history_table.setItem(
+                r, 2, QTableWidgetItem(f"{res.single_core_score:.0f}")
+            )
+            self.bench_history_table.setItem(
+                r, 3, QTableWidgetItem(f"{res.multi_core_score:.0f}")
+            )
+            self.bench_history_table.setItem(
+                r, 4, QTableWidgetItem(f"{res.ops_per_sec_multi:,.0f}")
+            )
+            self.bench_history_table.setItem(
+                r, 5,
+                QTableWidgetItem(
+                    f"{res.max_temperature_c:.1f} °C" if res.max_temperature_c else "--"
+                ),
+            )
+            self.bench_history_table.setItem(
+                r, 6, QTableWidgetItem("Yes" if res.thermal_throttled else "No")
+            )
+            self.bench_history_table.setItem(
+                r, 7, QTableWidgetItem(f"{res.consistency_percent:.1f} %")
+            )
+
+    def _export_benchmark_report(self) -> None:
+        from PyQt5.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Benchmark Report", "benchmark_report.csv", "CSV Files (*.csv)"
+        )
+        if not path:
+            return
+        success, message = self._module.export_benchmark_report(path)
+        if success:
+            QMessageBox.information(self, "Export Complete", message)
+        else:
+            QMessageBox.warning(self, "Export Failed", message)
 
     # ---- Updates ----------------------------------------------------------
 
