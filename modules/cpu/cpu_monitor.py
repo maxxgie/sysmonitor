@@ -68,6 +68,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
     QScrollArea,
     QTableWidget,
     QTableWidgetItem,
@@ -785,7 +786,7 @@ class CPUMonitorModule:
         if config is None:
             config = BenchmarkConfig()
 
-        cores = max(1, self._collector.info().logical_cores)
+        cores = max(1, self._module.collector().info().logical_cores)
         threads = max(1, min(config.thread_count, cores * 2))
         intensity = max(0.1, min(config.intensity, 5.0))
 
@@ -1462,7 +1463,7 @@ class CPUPage(QWidget):
         config_layout.addWidget(QLabel("Threads:"), 1, 0)
         self.bench_threads = QSpinBox()
         self.bench_threads.setRange(1, 64)
-        self.bench_threads.setValue(max(1, self._collector.info().logical_cores))
+        self.bench_threads.setValue(max(1, self._module.collector().info().logical_cores))
         config_layout.addWidget(self.bench_threads, 1, 1)
 
         config_layout.addWidget(QLabel("Intensity:"), 1, 2)
