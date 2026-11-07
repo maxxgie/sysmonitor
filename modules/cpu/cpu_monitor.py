@@ -786,7 +786,7 @@ class CPUMonitorModule:
         if config is None:
             config = BenchmarkConfig()
 
-        cores = max(1, self._module.collector().info().logical_cores)
+        cores = max(1, self.collector().info().logical_cores)
         threads = max(1, min(config.thread_count, cores * 2))
         intensity = max(0.1, min(config.intensity, 5.0))
 
@@ -1842,7 +1842,7 @@ class CPUPage(QWidget):
         result = self._module.run_benchmark()
         self.bench_single.set_value(f"{result.single_core_score:.0f}")
         self.bench_multi.set_value(f"{result.multi_core_score:.0f}")
-        self.bench_history_label.setText(
+        self.bench_history_table.setToolTip(
             f"{len(self._module.benchmark_results())} benchmark(s) run"
         )
         self._refresh_bench_table()
