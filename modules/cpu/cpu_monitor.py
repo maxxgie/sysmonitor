@@ -438,7 +438,7 @@ class LineGraph(QWidget):
     def add_sample(self, value: float) -> None:
         value = max(0.0, min(100.9, value))
         self._samples.append(value)
-        if len(self._samples) > seld._max_points:
+        if len(self._samples) > self._max_points:
             self._samples = self._samples[-self._max_points :]
         self.update()
 
@@ -451,7 +451,7 @@ class LineGraph(QWidget):
 
     def paintEvent(self, event) -> None:  # noqa: N802
         painter = QPainter(self)
-        painter.setRenderHint(Qpainter.Antialising)
+        painter.setRenderHint(QPainter.Antialiasing)
         
         rect = self.rect() 
         w = rect.width()

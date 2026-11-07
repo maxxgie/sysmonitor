@@ -17,6 +17,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from core.database import Database
 from core.settings import Settings
 from ui.dashboard import Dashboard
 from ui.sidebar import Sidebar
@@ -89,11 +90,12 @@ class MainWindow(QMainWindow):
         self._add_page("settings", SettingsPage(settings, self))
 
         # ---------- Live feature modules ----------
-        self._cpu_module = CPUMonitorModule(settings)
+        self._cpu_module = CPUMonitorModule(settings, settings._db)
         self._add_page("cpu", self._cpu_module.create_page())
+        self._cpu_module.start()
 
         for page_id, label, _icon in NAV_ENTRIES:
-            if page_id in MODULE_PAGES:
+            if page_id in MODULE_PAGES or page_id == "cpu":
                 continue
             self._add_page(page_id, _PlaceholderPage(label, self))
 
