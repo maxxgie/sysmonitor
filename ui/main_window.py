@@ -3,12 +3,12 @@
 import time
 
 import psutil
-from PyQt5.QtCore import QByteArray, QTimer, Qt
+from PyQt5.QtCore import QByteArray, QSize, QTimer, Qt
 from PyQt5.QtWidgets import (
     QApplication,
-    QFrame,
     QLabel,
     QMainWindow,
+    QSizePolicy,
     QSplitter,
     QStackedWidget,
     QStatusBar,
@@ -77,6 +77,9 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget(self)
         self._stack.setObjectName("pages")
+        self._stack.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
 
         self._pages: dict = {}
         self._add_page("dashboard", Dashboard(self))

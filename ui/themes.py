@@ -142,6 +142,11 @@ def build_stylesheet(palette: Dict[str, str]) -> str:
         border: none;
     }}
 
+    QLabel#sidebarIcon {{
+        color: {p['accent']};
+        background: transparent;
+    }}
+
     QLabel#sidebarTitle {{
         color: {p['text']};
         background: transparent;
@@ -166,21 +171,30 @@ def build_stylesheet(palette: Dict[str, str]) -> str:
         background-color: transparent;
     }}
 
-    QFrame#navItem {{
+    QPushButton#navButton {{
         background-color: transparent;
         border: none;
         border-radius: 10px;
         margin: 6px 14px;
-        padding: 0;
+        text-align: left;
+        padding: 10px 18px;
+        color: {p['text_secondary']};
     }}
 
-    QFrame#navItem[active="true"] {{
+    QPushButton#navButton:checked {{
         background-color: {p['accent_bg']};
+        color: {p['accent_active']};
         border-left: 4px solid {p['accent_active']};
+        padding-left: 14px;
     }}
 
-    QFrame#navItem:!active:hover {{
+    QPushButton#navButton:!checked:hover {{
         background-color: {p['surface_alt']};
+        color: {p['text']};
+    }}
+
+    QPushButton#navButton:pressed {{
+        background-color: {p['accent_bg']};
     }}
 
     /* ============ Pages / Stack ============ */
