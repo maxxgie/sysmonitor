@@ -382,28 +382,63 @@ class CPUCollector:
 
     # ---- Processes --------------------------------------------------------
 
-    def top_processes(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Return top CPU-consuming processes."""
+    def top_processes(
+        self, limit: int = 50, sort_by: str = "cpu_percent"
+    ) -> List[Dict[str, Any]]:
+        """Return top CPU-consuming processes with full details.
+
+        Args:
+            limit: Maximum number of processes to return.
+            sort_by: Field to sort by ("cpu_percent", "memory_mb", "pid", "name").
+        """
         procs: List[Dict[str, Any]] = []
         try:
-            for p in psutil.process_iter(["pid", "name", "cpu_percent", "memory_info"]):
+            for p in psutil.process_iter(
+                ["pid", "name", "cpu_percent", "memory_info", "status",
+                 "username", "cmdline", "create_time", "num_threads"]
+            ):
                 try:
                     info = p.info
+                    mem_info = info.get("memory_info") or None
+                    mem_mb = round(mem_info.rss / 1024 / 1024, 2) if mem_info else 0.0
+                    cmdline = info.get("cmdline") or []
+                    cmdline_str = " ".join(cmdline) if cmdline else ""
                     procs.append({
                         "pid": info.get("pid", 0),
                         "name": info.get("name", "Unknown") or "Unknown",
                         "cpu_percent": info.get("cpu_percent", 0.0) or 0.0,
-                        "memory_mb": round(
-                            (info.get("memory_info").rss if info.get("memory_info") else 0) / 1024 / 1024,
-                            2,
-                        ),
+                        "memory_mb": mem_mb,
+                        "status": info.get("status", "Unknown") or "Unknown",
+                        "username": info.get("username", "Unknown") or "Unknown",
+                        "cmdline": cmdline_str[:200],
+                        "threads": info.get("num_threads", 0) or 0,
                     })
                 except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                     continue
         except Exception:
             pass
-        procs.sort(key=lambda x: x["cpu_percent"], reverse=True)
+
+        reverse = sort_by != "name"
+        procs.sort(key=lambda x: str(x.get(sort_by, 0)).lower(), reverse=reverse)
         return procs[:limit]
+
+    def terminate_process(self, pid: int) -> tuple[bool, str]:
+        """Terminate a process by PID. Returns (success, message)."""
+        try:
+            proc = psutil.Process(pid)
+            name = proc.name()
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except psutil.TimeoutExpired:
+                proc.kill()
+            return True, f"Terminated {name} (PID {pid})"
+        except psutil.NoSuchProcess:
+            return False, f"Process {pid} no longer exists"
+        except psutil.AccessDenied:
+            return False, f"Access denied terminating PID {pid}"
+        except Exception as exc:
+            return False, f"Error terminating PID {pid}: {exc}"
 
     # ---- Derived ----------------------------------------------------------
 
