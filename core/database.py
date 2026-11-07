@@ -6,7 +6,7 @@ from typing import Any, Iterable, Optional
 
 from PyQt5.QtCore import QStandardPaths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _app_data_dir() -> str:
@@ -52,6 +52,34 @@ class Database:
             self.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (?)",
                 (1,),
+            )
+        if current < 2:
+            self.execute(
+                "CREATE TABLE IF NOT EXISTS cpu_history ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "timestamp TEXT NOT NULL, "
+                "usage_percent REAL NOT NULL, "
+                "frequency_mhz REAL, "
+                "temperature_c REAL, "
+                "per_core_usage TEXT"
+                ")"
+            )
+            self.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cpu_history_timestamp "
+                "ON cpu_history (timestamp)"
+            )
+            self.execute(
+                "CREATE TABLE IF NOT EXISTS alerts ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "timestamp TEXT NOT NULL, "
+                "metric TEXT NOT NULL, "
+                "value TEXT NOT NULL, "
+                "threshold TEXT, "
+                "acknowledged INTEGER NOT NULL DEFAULT 0"
+                ")"
+            )
+            self.execute(
+                "UPDATE schema_version SET version = 2 WHERE version = 1"
             )
         self._conn.commit()
 
