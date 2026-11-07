@@ -12,7 +12,7 @@ from ui.main_window import MainWindow
 from ui.themes import build_stylesheet, THEMES
 
 def create_app() -> QApplication:
-    app = Qpplication(sys.argv)
+    app = QApplication(sys.argv)
     app.setApplicationName("System Monitor")
     app.setOrganizationName("SystemMonitor")
     return app
