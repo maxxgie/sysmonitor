@@ -14,7 +14,7 @@ can be selected from the Settings page.
 - Live Dashboard: CPU %, RAM %, disk %, upload/download speed (refreshes every second)
 - System Information: OS, hostname, architecture, CPU count, uptime, boot time
 - Status bar: live CPU/RAM indicators and clock
-- Settings: theme (Blue & White / Dark), refresh interval, graph history
+- Settings: theme (Blue & White / Dark, applies live), refresh interval, graph history
 - Sidebar navigation with page switching
 - Logging: console + rotating file log
 - Settings persistence: survives restart via SQLite

@@ -2,8 +2,10 @@
 
 import time
 
+import psutil
 from PyQt5.QtCore import QByteArray, QTimer, Qt
 from PyQt5.QtWidgets import (
+    QApplication,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -13,8 +15,6 @@ from PyQt5.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-
-import psutil
 
 from core.settings import Settings
 from ui.dashboard import Dashboard
@@ -47,18 +47,18 @@ class _PlaceholderPage(QWidget):
         layout.setAlignment(Qt.AlignCenter)
         box = QFrame()
         box.setObjectName("card")
-        box.setFixedSize(420, 260)
+        box.setFixedSize(460, 300)
         inner = QVBoxLayout(box)
         inner.setAlignment(Qt.AlignCenter)
         icon = QLabel("\u26A0")
         icon.setAlignment(Qt.AlignCenter)
-        icon.setStyleSheet("font-size: 40px;")
+        icon.setStyleSheet("font-size: 48px;")
         lbl = QLabel(f"{title} \u2014 coming soon")
         lbl.setAlignment(Qt.AlignCenter)
-        lbl.setStyleSheet("font-size: 16px; font-weight: 600; margin-top: 12px;")
+        lbl.setStyleSheet("font-size: 18px; font-weight: 700; margin-top: 14px;")
         sub = QLabel("This module is built in a later phase.")
         sub.setAlignment(Qt.AlignCenter)
-        sub.setStyleSheet("color: #64748B; font-size: 13px;")
+        sub.setStyleSheet("color: #64748B; font-size: 14px;")
         inner.addWidget(icon)
         inner.addWidget(lbl)
         inner.addWidget(sub)
@@ -69,11 +69,12 @@ class MainWindow(QMainWindow):
     def __init__(self, settings: Settings, parent=None) -> None:
         super().__init__(parent)
         self._settings = settings
+        self._settings.setting_changed.connect(self._on_setting_changed)
         self.setWindowTitle("System Monitor")
-        self.resize(1150, 720)
+        self.resize(1200, 760)
 
         self._sidebar = Sidebar(NAV_ENTRIES, self)
-        self._sidebar.setFixedWidth(240)
+        self._sidebar.setFixedWidth(250)
 
         self._stack = QStackedWidget(self)
         self._stack.setObjectName("pages")
@@ -102,8 +103,6 @@ class MainWindow(QMainWindow):
 
         root.addLayout(split)
 
-        self.setCentralWidget(central)
-
         self._status = QStatusBar(self)
         self._status.setObjectName("statusBar")
         self._cpu_lbl = QLabel("CPU: -- %")
@@ -113,6 +112,8 @@ class MainWindow(QMainWindow):
         self._status.addWidget(self._mem_lbl)
         self._status.addPermanentWidget(self._time_lbl)
         self.setStatusBar(self._status)
+
+        self.setCentralWidget(central)
 
         start_page = self._settings.get("start_page", "dashboard")
         if start_page not in self._pages:
@@ -153,6 +154,11 @@ class MainWindow(QMainWindow):
             self._cpu_lbl.setText("CPU: -- %")
             self._mem_lbl.setText("RAM: -- %")
         self._time_lbl.setText(time.strftime("%H:%M:%S"))
+
+    def _on_setting_changed(self, key: str, value) -> None:
+        if key == "theme":
+            palette = THEMES.get(value, THEMES["blue_white"])
+            QApplication.instance().setStyleSheet(build_stylesheet(palette))
 
     def closeEvent(self, event) -> None:
         self._settings.set(
