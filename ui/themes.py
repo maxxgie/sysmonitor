@@ -25,6 +25,8 @@ BLUE_WHITE: Dict[str, str] = {
     "warning": "#F59E0B",
     "danger": "#EF4444",
     "shadow": "rgba(15, 23, 42, 0.08)",
+    "statusbar": "#FFFFFF",
+    "statusbar_border": "#E2E8F0",
 }
 
 DARK: Dict[str, str] = {
@@ -46,6 +48,8 @@ DARK: Dict[str, str] = {
     "warning": "#FBBF24",
     "danger": "#F87171",
     "shadow": "rgba(0, 0, 0, 0.45)",
+    "statusbar": "#0B1021",
+    "statusbar_border": "#334155",
 }
 
 THEMES = {"blue_white": BLUE_WHITE, "dark": DARK}
@@ -77,6 +81,20 @@ def build_stylesheet(palette: Dict[str, str]) -> str:
         border: 1px solid {p['border']};
         border-radius: 6px;
         padding: 6px 10px;
+    }}
+
+    QStatusBar {{
+        background-color: {p['statusbar']};
+        color: {p['text_secondary']};
+        border-top: 1px solid {p['statusbar_border']};
+        padding: 4px 12px;
+        font-size: 12px;
+    }}
+
+    QStatusBar QLabel {{
+        color: {p['text_secondary']};
+        background: transparent;
+        padding: 2px 8px;
     }}
 
     /* ---------- Sidebar ---------- */
