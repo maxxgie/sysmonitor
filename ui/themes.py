@@ -157,16 +157,13 @@ def build_stylesheet(palette: Dict[str, str]) -> str:
         border: none;
     }}
 
-    QListWidget#sidebarList {{
+    QScrollArea#sidebarScroll {{
         background-color: transparent;
         border: none;
-        outline: none;
-        padding: 8px 0;
     }}
 
-    QListWidget#sidebarList::item {{
+    QWidget#navContainer {{
         background-color: transparent;
-        border: none;
     }}
 
     QFrame#navItem {{

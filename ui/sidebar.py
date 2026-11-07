@@ -7,8 +7,7 @@ from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -16,6 +15,8 @@ from PyQt5.QtWidgets import (
 
 class _NavItem(QFrame):
     """Single nav entry: icon + label with active/hover states."""
+
+    clicked = pyqtSignal(str)
 
     def __init__(self, page_id: str, label: str, icon: str, parent=None) -> None:
         super().__init__(parent)
@@ -71,6 +72,27 @@ class _NavItem(QFrame):
             )
             self._icon.setStyleSheet("font-size: 16px; color: #94A3B8;")
 
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit(self.page_id)
+        super().mousePressEvent(event)
+
+    def enterEvent(self, event) -> None:
+        if not self._active:
+            self._label.setStyleSheet(
+                "font-size: 13px; font-weight: 600; color: #0F172A;"
+            )
+            self._icon.setStyleSheet("font-size: 16px; color: #0F172A;")
+        super().enterEvent(event)
+
+    def leaveEvent(self, event) -> None:
+        if not self._active:
+            self._label.setStyleSheet(
+                "font-size: 13px; font-weight: 600; color: #64748B;"
+            )
+            self._icon.setStyleSheet("font-size: 16px; color: #94A3B8;")
+        super().leaveEvent(event)
+
 
 class Sidebar(QWidget):
     """Professional sidebar navigation rail. Emits page_selected(page_id)."""
@@ -81,7 +103,9 @@ class Sidebar(QWidget):
         super().__init__(parent)
         self.setObjectName("sidebar")
         self.setFixedWidth(260)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.setSizePolicy(
+            QSizePolicy.Fixed, QSizePolicy.Expanding
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -120,54 +144,39 @@ class Sidebar(QWidget):
         div.setFixedHeight(1)
         root.addWidget(div)
 
-        # ---------- Nav list ----------
-        self._list = QListWidget()
-        self._list.setObjectName("sidebarList")
-        self._list.setViewMode(QListWidget.ListMode)
-        self._list.setMovement(QListWidget.Static)
-        self._list.setSelectionMode(QListWidget.NoSelection)
-        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self._list.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self._list.setFrameShape(QFrame.NoFrame)
-        self._list.setFocusPolicy(Qt.NoFocus)
+        # ---------- Nav list (scrollable, direct widgets) ----------
+        scroll = QScrollArea()
+        scroll.setObjectName("sidebarScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        nav_container = QWidget()
+        nav_container.setObjectName("navContainer")
+        nav_layout = QVBoxLayout(nav_container)
+        nav_layout.setContentsMargins(0, 8, 0, 8)
+        nav_layout.setSpacing(0)
 
         self._items: dict = {}
         for page_id, label, icon in entries:
-            self._add_item(page_id, label, icon)
+            item = _NavItem(page_id, label, icon, self)
+            item.clicked.connect(self._on_item_clicked)
+            nav_layout.addWidget(item)
+            self._items[page_id] = item
 
-        self._list.currentRowChanged.connect(self._on_row_changed)
-        root.addWidget(self._list)
+        nav_layout.addStretch()
+        scroll.setWidget(nav_container)
+        root.addWidget(scroll)
 
-        # ---------- Spacer ----------
-        root.addStretch()
-
-        # ---------- Bottom: Settings always visible ----------
-        # Settings is already in entries; keep it in the flow.
-
-    def _add_item(self, page_id: str, label: str, icon: str) -> None:
-        widget = _NavItem(page_id, label, icon, self)
-        item = QListWidgetItem(self._list)
-        item.setData(Qt.ItemDataRole.UserRole, page_id)
-        item.setSizeHint(QSize(240, 52))
-        self._list.addItem(item)
-        self._list.setItemWidget(item, widget)
-        self._items[page_id] = (item, widget)
-
-    def set_active_page(self, page_id: str) -> None:
-        for pid, (item, widget) in self._items.items():
-            is_active = pid == page_id
-            widget.set_active(is_active)
-            if is_active:
-                self._list.setCurrentItem(item)
-
-    def _on_row_changed(self, row: int) -> None:
-        item = self._list.item(row)
-        if item is None:
-            return
-        page_id = item.data(Qt.ItemDataRole.UserRole)
+    def _on_item_clicked(self, page_id: str) -> None:
+        self.set_active_page(page_id)
         self.page_selected.emit(page_id)
 
+    def set_active_page(self, page_id: str) -> None:
+        for pid, item in self._items.items():
+            item.set_active(pid == page_id)
+
     def set_theme_palette(self, palette: dict) -> None:
-        """Inject palette-derived colours into child items if needed."""
-        # The QSS handles colours; this hook is available for future tweaks.
+        """Placeholder for future palette-driven tweaks."""
         pass
