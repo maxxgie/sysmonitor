@@ -16,7 +16,7 @@ BLUE_WHITE: Dict[str, str] = {
     # Borders
     "border": "#E2E8F0",
     "border_focus": "#3B82F6",
-    "border_hover": "#94A3B8",
+    "border_hover": "#CBD5E1",
     # Text
     "text": "#0F172A",
     "text_secondary": "#64748B",
@@ -132,36 +132,58 @@ def build_stylesheet(palette: Dict[str, str]) -> str:
     }}
 
     /* ============ Sidebar ============ */
-    QListWidget#sidebar {{
+    QWidget#sidebar {{
         background-color: {p['surface']};
-        border: none;
         border-right: 1px solid {p['border']};
-        outline: none;
-        padding: 10px 0;
     }}
 
-    QListWidget#sidebar::item {{
+    QFrame#sidebarHeader {{
+        background-color: transparent;
+        border: none;
+    }}
+
+    QLabel#sidebarTitle {{
+        color: {p['text']};
+        background: transparent;
+    }}
+
+    QLabel#sidebarSubtitle {{
+        color: {p['text_muted']};
+        background: transparent;
+    }}
+
+    QFrame#sidebarDivider {{
+        background-color: {p['border']};
+        border: none;
+    }}
+
+    QListWidget#sidebarList {{
+        background-color: transparent;
+        border: none;
+        outline: none;
+        padding: 8px 0;
+    }}
+
+    QListWidget#sidebarList::item {{
+        background-color: transparent;
+        border: none;
+    }}
+
+    QFrame#navItem {{
         background-color: transparent;
         border: none;
         border-radius: 10px;
         margin: 6px 14px;
-        padding: 12px 16px;
-        color: {p['text_secondary']};
-        font-size: 13px;
-        font-weight: 600;
-        text-align: left;
+        padding: 0;
     }}
 
-    QListWidget#sidebar::item:selected {{
+    QFrame#navItem[active="true"] {{
         background-color: {p['accent_bg']};
-        color: {p['accent_active']};
         border-left: 4px solid {p['accent_active']};
-        padding-left: 12px;
     }}
 
-    QListWidget#sidebar::item:hover:!selected {{
+    QFrame#navItem:!active:hover {{
         background-color: {p['surface_alt']};
-        color: {p['text']};
     }}
 
     /* ============ Pages / Stack ============ */

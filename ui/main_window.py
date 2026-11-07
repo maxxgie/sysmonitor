@@ -71,7 +71,7 @@ class MainWindow(QMainWindow):
         self._settings = settings
         self._settings.setting_changed.connect(self._on_setting_changed)
         self.setWindowTitle("System Monitor")
-        self.resize(1200, 760)
+        self.resize(1250, 800)
 
         self._sidebar = Sidebar(NAV_ENTRIES, self)
 
@@ -99,7 +99,7 @@ class MainWindow(QMainWindow):
         splitter.setHandleWidth(1)
         splitter.addWidget(self._sidebar)
         splitter.addWidget(self._stack)
-        splitter.setSizes([250, 950])
+        splitter.setSizes([260, 990])
 
         root.addWidget(splitter)
 
