@@ -7,9 +7,9 @@ from PyQt5.QtCore import QByteArray, QTimer, Qt
 from PyQt5.QtWidgets import (
     QApplication,
     QFrame,
-    QHBoxLayout,
     QLabel,
     QMainWindow,
+    QSplitter,
     QStackedWidget,
     QStatusBar,
     QVBoxLayout,
@@ -74,7 +74,6 @@ class MainWindow(QMainWindow):
         self.resize(1200, 760)
 
         self._sidebar = Sidebar(NAV_ENTRIES, self)
-        self._sidebar.setFixedWidth(250)
 
         self._stack = QStackedWidget(self)
         self._stack.setObjectName("pages")
@@ -95,13 +94,14 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        split = QHBoxLayout()
-        split.setContentsMargins(0, 0, 0, 0)
-        split.setSpacing(0)
-        split.addWidget(self._sidebar)
-        split.addWidget(self._stack)
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(1)
+        splitter.addWidget(self._sidebar)
+        splitter.addWidget(self._stack)
+        splitter.setSizes([250, 950])
 
-        root.addLayout(split)
+        root.addWidget(splitter)
 
         self._status = QStatusBar(self)
         self._status.setObjectName("statusBar")
