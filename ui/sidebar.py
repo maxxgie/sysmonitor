@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QHBoxLayout,
     QVBoxLayout,
     QWidget,
 )
