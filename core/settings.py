@@ -24,6 +24,7 @@ class Settings(QObject):
         "start_page": "dashboard",
         "cpu_alert_threshold": 90,
         "ram_alert_threshold": 90,
+        "cpu_temp_threshold": 85,
         "window_geometry": "",
     }
 
