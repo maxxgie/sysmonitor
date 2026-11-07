@@ -1838,25 +1838,4 @@ class CPUPage(QWidget):
                 r, 3, QTableWidgetItem(str(p["memory_mb"]))
             )
 
-    def _run_benchmark(self) -> None:
-        result = self._module.run_benchmark()
-        self.bench_single.set_value(f"{result.single_core_score:.0f}")
-        self.bench_multi.set_value(f"{result.multi_core_score:.0f}")
-        self.bench_history_label.setText(
-            f"{len(self._module.benchmark_results())} benchmark(s) run"
-        )
-        self._refresh_bench_table()
 
-    def _refresh_bench_table(self) -> None:
-        results = self._module.benchmark_results()
-        self.bench_table.setRowCount(len(results))
-        for r, res in enumerate(results):
-            self.bench_table.setItem(
-                r, 0, QTableWidgetItem(f"{res.single_core_score:.0f}")
-            )
-            self.bench_table.setItem(
-                r, 1, QTableWidgetItem(f"{res.multi_core_score:.0f}")
-            )
-            self.bench_table.setItem(
-                r, 2, QTableWidgetItem(f"{res.duration_seconds:.3f}")
-            )
