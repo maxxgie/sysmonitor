@@ -1,4 +1,8 @@
-"""Settings page: theme, refresh interval, history points."""
+"""Settings page: theme, refresh interval, history points.
+
+Theme changes are applied live via the Settings.setting_changed signal,
+so no restart is required.
+"""
 
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
@@ -13,11 +17,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from core.settings import Settings
+
 
 class SettingsPage(QWidget):
-    def __init__(self, settings, parent=None) -> None:
+    def __init__(self, settings: Settings, parent=None) -> None:
         super().__init__(parent)
         self._settings = settings
+        self._settings.setting_changed.connect(self._on_setting_changed)
 
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -27,14 +34,14 @@ class SettingsPage(QWidget):
         form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(14)
+        form.setVerticalSpacing(18)
 
         self.theme_combo = QComboBox()
         self.theme_combo.addItems(["Blue & White", "Dark"])
         self.theme_combo.setCurrentIndex(
             0 if settings.get("theme") == "blue_white" else 1
         )
-        self.theme_combo.currentTextChanged.connect(self._on_theme)
+        self.theme_combo.currentTextChanged.connect(self._on_theme_combo)
 
         self.refresh_spin = QSpinBox()
         self.refresh_spin.setRange(500, 60000)
@@ -61,18 +68,26 @@ class SettingsPage(QWidget):
         container.setLayout(form)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(24, 16, 24, 16)
+        root.setContentsMargins(28, 20, 28, 20)
         root.setSpacing(0)
         heading = QLabel("Settings")
         heading.setObjectName("heading")
-        sub = QLabel("Preferences are saved automatically and survive a restart.")
+        sub = QLabel("Preferences save automatically and apply immediately.")
         sub.setObjectName("subheading")
         root.addWidget(heading)
         root.addWidget(sub)
-        root.addSpacing(16)
+        root.addSpacing(20)
         root.addWidget(scroll)
         scroll.setWidget(container)
 
-    def _on_theme(self, text: str) -> None:
+    def _on_theme_combo(self, text: str) -> None:
         theme = "blue_white" if text == "Blue & White" else "dark"
         self._settings.set("theme", theme)
+
+    def _on_setting_changed(self, key: str, value) -> None:
+        if key == "theme":
+            self.theme_combo.blockSignals(True)
+            self.theme_combo.setCurrentIndex(
+                0 if value == "blue_white" else 1
+            )
+            self.theme_combo.blockSignals(False)
