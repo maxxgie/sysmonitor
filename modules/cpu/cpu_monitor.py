@@ -809,6 +809,7 @@ class CPUMonitorModule:
         stop_monitor = threading.Event()
 
         def _monitor() -> None:
+            nonlocal max_freq, peak_temp, min_temp, thermal_throttled
             while not stop_monitor.is_set():
                 try:
                     data = self._collector.collect()
