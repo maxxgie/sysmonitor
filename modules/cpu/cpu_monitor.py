@@ -55,11 +55,14 @@ from PyQt5.QtCore import QPointF, QSize, QTimer, Qt
 from PyQt5.QtGui import QColor, QPainter, QPen, QPolygonF, QRadialGradient
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSizePolicy,
@@ -899,21 +902,46 @@ class CPUPage(QWidget):
         root.setContentsMargins(24, 20, 24, 20)
         root.setSpacing(12)
 
+        # ---- Header with search and controls ----
         header = QHBoxLayout()
+        header.setSpacing(12)
+
         title = QLabel("Top CPU Processes")
         title.setObjectName("heading")
-        refresh_btn = QPushButton("Refresh")
-        refresh_btn.setObjectName("ghost")
-        refresh_btn.clicked.connect(self._refresh_processes)
         header.addWidget(title)
+
         header.addStretch()
-        header.addWidget(refresh_btn)
+
+        self.process_search = QLineEdit()
+        self.process_search.setPlaceholderText("Search process name...")
+        self.process_search.setObjectName("processSearch")
+        self.process_search.setFixedWidth(220)
+        self.process_search.textChanged.connect(self._on_process_search)
+        header.addWidget(self.process_search)
+
+        self.process_sort = QComboBox()
+        self.process_sort.setObjectName("processSort")
+        self.process_sort.addItems(["CPU %", "Memory", "PID", "Name"])
+        self.process_sort.currentTextChanged.connect(self._on_process_sort)
+        header.addWidget(self.process_sort)
+
+        self.process_refresh = QPushButton("Refresh")
+        self.process_refresh.setObjectName("ghost")
+        self.process_refresh.clicked.connect(self._refresh_processes)
+        header.addWidget(self.process_refresh)
+
+        self.process_kill = QPushButton("Terminate Selected")
+        self.process_kill.setObjectName("danger")
+        self.process_kill.clicked.connect(self._terminate_selected)
+        header.addWidget(self.process_kill)
+
         root.addLayout(header)
 
-        self.process_table = QTableWidget(0, 4)
+        # ---- Process table ----
+        self.process_table = QTableWidget(0, 6)
         self.process_table.setObjectName("processTable")
         self.process_table.setHorizontalHeaderLabels(
-            ["PID", "Name", "CPU %", "Memory (MB)"]
+            ["PID", "Name", "CPU %", "Memory (MB)", "Status", "Command"]
         )
         self.process_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
@@ -923,10 +951,98 @@ class CPUPage(QWidget):
         )
         self.process_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.process_table.setAlternatingRowColors(True)
+        self.process_table.setSortingEnabled(True)
         root.addWidget(self.process_table, 1)
 
+        # ---- Auto-refresh timer for processes tab ----
+        self._proc_timer = QTimer(self)
+        self._proc_timer.timeout.connect(self._refresh_processes)
+        self._proc_timer.start(2000)
+
+        self._process_cache: List[Dict[str, Any]] = []
+        self._process_filter: str = ""
         self._refresh_processes()
         return widget
+
+    def _refresh_processes(self) -> None:
+        """Fetch real-time process list and refresh the table."""
+        sort_map = {
+            "CPU %": "cpu_percent",
+            "Memory": "memory_mb",
+            "PID": "pid",
+            "Name": "name",
+        }
+        sort_key = sort_map.get(self.process_sort.currentText(), "cpu_percent")
+        procs = self._collector.top_processes(limit=100, sort_by=sort_key)
+
+        # Apply search filter
+        if self._process_filter:
+            f = self._process_filter.lower()
+            procs = [
+                p for p in procs
+                if f in str(p.get("name", "")).lower()
+                or f in str(p.get("cmdline", "")).lower()
+                or f in str(p.get("pid", "")).lower()
+            ]
+
+        self._process_cache = procs
+        self._fill_process_table(procs)
+
+    def _fill_process_table(self, procs: List[Dict[str, Any]]) -> None:
+        self.process_table.setRowCount(len(procs))
+        for r, p in enumerate(procs):
+            pid_item = QTableWidgetItem(str(p["pid"]))
+            pid_item.setData(Qt.ItemDataRole.UserRole, p["pid"])
+            self.process_table.setItem(r, 0, pid_item)
+
+            self.process_table.setItem(r, 1, QTableWidgetItem(str(p["name"])))
+            self.process_table.setItem(
+                r, 2, QTableWidgetItem(f"{p['cpu_percent']:.1f}%")
+            )
+            self.process_table.setItem(
+                r, 3, QTableWidgetItem(str(p["memory_mb"]))
+            )
+            self.process_table.setItem(r, 4, QTableWidgetItem(str(p.get("status", ""))))
+            self.process_table.setItem(
+                r, 5, QTableWidgetItem(str(p.get("cmdline", "")))
+            )
+
+    def _on_process_search(self, text: str) -> None:
+        self._process_filter = text
+        self._refresh_processes()
+
+    def _on_process_sort(self, text: str) -> None:
+        self._refresh_processes()
+
+    def _terminate_selected(self) -> None:
+        """Terminate the currently selected process."""
+        selected = self.process_table.selectedItems()
+        if not selected:
+            return
+        row = selected[0].row()
+        pid_item = self.process_table.item(row, 0)
+        if pid_item is None:
+            return
+        pid = int(pid_item.data(Qt.ItemDataRole.UserRole) or pid_item.text())
+        name_item = self.process_table.item(row, 1)
+        pname = name_item.text() if name_item else str(pid)
+
+        reply = QMessageBox.question(
+            self,
+            "Terminate Process",
+            f"Are you sure you want to terminate '{pname}' (PID {pid})?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        success, message = self._collector.terminate_process(pid)
+        if success:
+            QMessageBox.information(self, "Terminated", message)
+        else:
+            QMessageBox.warning(self, "Cannot Terminate", message)
+        self._refresh_processes()
 
     def _benchmark_tab(self) -> QWidget:
         widget = QWidget()
