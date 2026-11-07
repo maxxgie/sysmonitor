@@ -51,7 +51,7 @@ def _app_data_dir() -> str:
             )
             self._initialize()
 
-         def _initialize(self) -> None:
+        def _initialize(self) -> None:
             self.execute(
                 "CREATE TABLE IF NOT EXISTS schema_version ("
                 "version INTEGER PRIMARY KEY"
